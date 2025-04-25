@@ -10,7 +10,7 @@ intervalo_avaliacao = 300 # intervalo para checar avaliação de treinamneto no 
 taxa_de_aprendizagem = 1e-3 # entendo só mais ou menos o que isso significa
 device = 'cuda' if torch.cuda.is_available() else 'cpu' # usa a gpu, se possível
 iteracoes_avaliacao = 200 # iterações para pegar a mediana de erro nos intervalos de avaliação
-n_embed = 32 # tamanho do vetor de embedding de cada token
+d_model = 32 # tamanho do vetor de embedding de cada token
 n_head = 4 # número de cabeças de atenção
 n_layer = 4 # número de camadas de atenção
 dropout = 0.2 # taxa de dropout (não sei o que é isso ainda)
@@ -99,11 +99,11 @@ class Head(nn.Module):
     def __init__(self, head_size):
         super().__init__()
         
-        # Camadas lineares que transformam o vetor de embedding
-        # em um vetor de tamanho head_size
-        self.key  = nn.Linear(n_embed, head_size, bias = False)
-        self.query = nn.Linear(n_embed, head_size, bias = False)
-        self.value = nn.Linear(n_embed, head_size, bias = False)
+        # Camadas lineares que vão criar a partir do vetor de embedding
+        # os vetores k, q e v
+        self.key  = nn.Linear(d_model, head_size, bias = False)
+        self.query = nn.Linear(d_model, head_size, bias = False)
+        self.value = nn.Linear(d_model, head_size, bias = False)
 
         # Cria uma matriz triangular inferior (que não é um parâmetro do modelo, por isso usamos register_buffer)
         self.register_buffer('tril', torch.tril(torch.ones(context_window, context_window))) 
@@ -140,7 +140,7 @@ class Head(nn.Module):
         # Multiplica os pesos pelos valores
         # Isso aqui finaliza a fórmula:
         # softmax(\frac{QK^T}{sqrt(d_k)})V
-        attention = wei @ v
+        attention = wei @ v 
 
         return attention # shape = (B, T, head_size)
 
@@ -155,7 +155,8 @@ class MultiHeadAttention(nn.Module):
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
 
         # linear layer que vai mapear os embeddings para o tamanho do vocabulário
-        self.proj = nn.Linear(n_embed, n_embed) 
+        # essa projeção serve para 
+        self.proj = nn.Linear(d_model, d_model) 
 
         self.dropout = nn.Dropout(dropout) 
     def forward(self, x):
@@ -173,13 +174,13 @@ class MultiHeadAttention(nn.Module):
 # aplica uma função de ativação ReLU
 # e depois reduz de volta para o tamanho do embedding.
 class FeedForward(nn.Module):
-    def __init__(self, n_embed):
+    def __init__(self, d_model):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(n_embed, 4 * n_embed),
+            nn.Linear(d_model, 4 * d_model),
             nn.ReLU(),
-            nn.Linear(4 * n_embed, n_embed),
+            nn.Linear(4 * d_model, d_model),
             nn.Dropout(0.2) # dropout é uma técnica que ajuda a evitar overfitting
         )
     
@@ -187,18 +188,18 @@ class FeedForward(nn.Module):
         return self.net(x)
     
 class block(nn.Module):
-    def __init__(self, n_embed, n_heads):
+    def __init__(self, d_model, n_heads):
         super().__init__()
 
-        head_size = n_embed // n_heads
+        head_size = d_model // n_heads # head_size nos dará os valores d_k, d_q, d_v
         self.sa = MultiHeadAttention(n_heads, head_size) 
-        self.ffwd = FeedForward(n_embed) 
+        self.ffwd = FeedForward(d_model) 
 
         # Normalização de camada é uma técnica que ajuda a estabilizar o treinamento
         # e a melhorar a convergência do modelo. Ela normaliza as ativações
         # de cada camada para que tenham média zero e variância um.
-        self.ln1 = nn.LayerNorm(n_embed) # Normalização de camada
-        self.ln2 = nn.LayerNorm(n_embed) # Normalização de camada
+        self.ln1 = nn.LayerNorm(d_model) # Normalização de camada
+        self.ln2 = nn.LayerNorm(d_model) # Normalização de camada
 
     def forward(self, x):
         # Passamos nosso input x pelas cabeças de atenção 
@@ -219,27 +220,30 @@ class BigramLanguageModel(nn.Module):
 
     def __init__(self):
         super().__init__()
-        # Estamos mapeando os tokens para vetores de embedding (inicialmente aleatórios)
-        self.token_embedding_table = nn.Embedding(tamanho_vocabulario, n_embed)
+        # Aqui, estamos definindo um parâmetro que pode ser aprendível pela função
+        # de otimização. Esta é a tabela de embedding que cria um vetor de dimensão
+        # d_model para cada possível token. Como temos tamanho_vocabulario tokens,
+        # esta tabela tem dimensão (tamanho_vocabulario, d_model)
+        self.token_modelling_table = nn.Embedding(tamanho_vocabulario, d_model)
 
         # Estamos mapeando as posições dos tokens para vetores de embedding
-        self.position_embedding_table = nn.Embedding(context_window, n_embed) 
+        self.position_modelling_table = nn.Embedding(context_window, d_model) 
 
         # Para o input x, iremos passá-lo por 3 blocos de atenção.
         # Isso é feito para aumentar a capacidade do modelo de aprender
         # padrões sobre os dados. Cada bloco de atenção tem 4 cabeças de atenção.
         # self.blocks = nn.Sequential(
-        #     block(n_embed, 4), 
-        #     block(n_embed, 4),
-        #     block(n_embed, 4),
-        #     nn.LayerNorm(n_embed), 
+        #     block(d_model, 4), 
+        #     block(d_model, 4),
+        #     block(d_model, 4),
+        #     nn.LayerNorm(d_model), 
         # )
-        self.blocks = nn.Sequential(*[block(n_embed, n_head) for _ in range(n_layer)]) # Isso aqui é o mesmo que o de cima, mas mais curto
-        self.ln_f = nn.LayerNorm(n_embed) # Normalização de camada
+        self.blocks = nn.Sequential(*[block(d_model, n_head) for _ in range(n_layer)]) # Isso aqui é o mesmo que o de cima, mas mais curto
+        self.ln_f = nn.LayerNorm(d_model) # Normalização de camada
 
         # Linear layer que vai mapear os embeddings para o tamanho do vocabulário
         # (lm_head significa language model head)
-        self.lm_head = nn.Linear(n_embed, tamanho_vocabulario) 
+        self.lm_head = nn.Linear(d_model, tamanho_vocabulario) # matriz de unembedding
  
     def forward(self, idx, targets = None): 
         B, T = idx.shape # B = tamanho do batch, T = tamanho da janela de contexto
@@ -248,27 +252,30 @@ class BigramLanguageModel(nn.Module):
         # tridimensional B x T x C onde 
         # B = tamanho de batches (32)
         # T = tamanho da janela de contexto (8)
-        # C = n_embed (32)
+        # C = d_model (32)
         # Este array está me dando o embedding
         # do c-ésimo token no t-ésimo contexto 
         # do b-ésimo batch: 
-        embedding_dos_tokens = self.token_embedding_table(idx)
+        embedding_dos_tokens = self.token_modelling_table(idx) 
         
         # Isso aqui pega o embedding de cada uma das posições
-        embedding_das_posicoes = self.position_embedding_table(torch.arange(T, device = device)) 
+        embedding_das_posicoes = self.position_modelling_table(torch.arange(T, device = device)) 
         
         # Estamos somando os dois vetores de embedding para cada token em idx (embedding do token e embedding da posição)
-        x = embedding_dos_tokens + embedding_das_posicoes 
+        h = embedding_dos_tokens + embedding_das_posicoes # h = hidden states
 
         # Aplicando os embeddings às cabeças de atenção
-        x = self.blocks(x) 
-        x = self.ln_f(x) # Normalização de camada
+        h = self.blocks(h) 
+        h = self.ln_f(h) # Normalização de camada
 
-        # Estamos pegando os logits do resultado do bloco de atenção
-        # e transformando os vetores de tamanho n_embed em vetores de tamanho tamanho_vocabulario.
-        # Note que x tem shape (B, T, num_heads * head_size), mas, num_heads * head_size = n_embed,
-        # por isso, é possível aplicar a lm_head. No final, lm_head(x) tem shape (B, T, tamanho_vocabulario)
-        logits = self.lm_head(x) 
+        # Estamos pegando os valores do resultado do bloco de atenção (os hidden states)
+        # e transformando os vetores de dimensão d_model (os embeddings de cada token) 
+        # em vetores de tamanho tamanho_vocabulario. Ou seja, em cada token da nossa sequência, 
+        # estamos atribuindo valores para cada token do vocabulário. Note que h, neste momento, 
+        # tem forma (B, T, num_heads * head_size), mas, num_heads * head_size = d_model,
+        # por isso, é possível aplicá-la à lm_head. No final, lm_head(h) tem forma 
+        # (B, T, tamanho_vocabulario)
+        logits = self.lm_head(h) 
         
         if targets == None:
             loss = None
