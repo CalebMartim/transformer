@@ -1,9 +1,10 @@
 import torch 
+import numpy as np
 import torch.nn as nn
 from torch.nn import functional as F
 
 # Parâmetros:
-tamanho_do_batch = 32 # Quantas sequências diferentes estarão sendo treinadas em paralelo
+B = 32 # Quantas sequências diferentes estarão sendo treinadas em paralelo
 context_window = 8 # Tamanho da janela de contexto
 iteracoes_treinamento = 5000 # Quantos passos de treinamento ele vai fazer 
 intervalo_avaliacao = 300 # intervalo para checar avaliação de treinamneto no treinamneto
@@ -55,18 +56,18 @@ dados_para_treinamento = dados[:divisao]
 dados_para_validacao = dados[divisao:]
 
 def get_batch(split):
-    # Estaremos treinando, em paralelo, tamanho_do_batch diferentes
-    # contextos. Para isso, pegamos tamanho_do_batch índices aleatórios,
+    # Estaremos treinando, em paralelo, B diferentes
+    # contextos. Para isso, pegamos B índices aleatórios,
     # criamos uma torch stack desses contextos, cada um, de tamanho context_window.
     # E criamos uma torch stack dos alvos de cada contexto também.
     # (os alvos são os tokens que queremos prever, ou seja, o próximo token de cada contexto)
 
     dados = dados_para_treinamento if split == 'train' else dados_para_validacao 
 
-    # Pega uma lista de tamanho_do_batch números aleatórios que variam entre 0 e (len(dados) - context_window - 1):
-    indices = torch.randint(len(dados) - context_window, (tamanho_do_batch,)) 
+    # Pega uma lista de B números aleatórios que variam entre 0 e (len(dados) - context_window - 1):
+    indices = torch.randint(len(dados) - context_window, (B,)) 
 
-    # Cria os batches em si, pegamos os tamanho_do_batch sequências de tokens, cada um começando em i e terminando em (i + context_window - 1):
+    # Cria os batches em si, pegamos os B sequências de tokens, cada um começando em i e terminando em (i + context_window - 1):
     # (note que estamos transformando uma lista de listas e transformando-a em uma torch.stack)
     x = torch.stack([dados[i : i + context_window] for i in indices])
     
