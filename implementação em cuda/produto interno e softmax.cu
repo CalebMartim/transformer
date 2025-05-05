@@ -1,7 +1,7 @@
-//#include "stdio.h"
+#include "stdio.h"
 #include "cmath"
 
-// constantes gpt-3
+// constantes no modelo gpt-3, para referência
 // const int d_model = 12288;
 // const int num_heads = 96;
 // const int C = 2048; // Tamanho do context window
@@ -13,7 +13,7 @@
 const int d_model = 4;
 const int num_heads = 2;
 const int C = 2; // Tamanho do context window
-const int D = d_model / num_heads;
+const int D = d_model / num_heads; // = 2
 const int thread_size = 32;
 const double sqrtD = sqrtl(D); 
 
@@ -22,7 +22,14 @@ int ceil_div(int a, int b) {
   return (a + b - 1) / b;
 }
 
-// Aplica uma camada linear A de forma (k, m) à uma matriz B de forma (n, m)
+// Pega um número aleatório entre -1 e 1
+double rand_double() {
+  double min = -1, max = 1;
+  double range = (max - min);
+  return min + (double) rand() / (RAND_MAX / range);
+}
+
+// Aplica uma camada linear A de forma (k, m) a uma matriz B de forma (n, m)
 // para obter uma matriz resultante C de forma (n, k)
 __global__ void transformacao_linear(double *A, double *B, double *C, int n, int m, int k) {
   int i = threadIdx.x + blockDim.x * blockIdx.x;
@@ -58,39 +65,39 @@ void transpor_cpu(double *A, double *B, int n, int m) {
   }
 }
 
-// Multiplica uma matiz A de forma (n, k) com uma matriz B de forma (k, m) 
+// Multiplica uma matriz A de forma (n, k) com uma matriz B de forma (k, m) 
 // e coloca o resultado na matriz C, que tem forma (n, m)
-__global__ void multiplica_matrizes(double *A, double *B, double *C, int n, int m, int k) {
-  int j = threadIdx.x + blockDim.x * blockDim.x;
+__global__ void multiplica_matrizes(double *A, double *B, double *C, int n, int m, int k, double sqrtD) {
+  int j = threadIdx.x + blockDim.x * blockIdx.x;
   int i = threadIdx.y + blockDim.y * blockIdx.y;
 
   if (j < m and i < n) {
-    // No caso de masked attention é necessário esse if
+    // No caso de masked attention, só calculamos o produto interno 
+    // Q_i * K_j quando j <= i, para prevenir "spoilers" pro modelo
     if (j <= i) {
       double soma = 0;
       for (int idx = 0; idx < k; ++idx) {
         soma += A[i * k + idx] * B[idx * m + j];
       }
-      C[i * m + j] = soma;
-
-      // No bloco de self attention:
-      C[i * m + j] = soma / sqrtD;
+      C[i * m + j] = soma / sqrtD; // A divisão normaliza o resultado 
     } else {
       C[i * m + j] = -INFINITY; 
     }
   }
 }
 
-
-// S(A) = (n, k), S(B) = (k, m), S(C) = (n, m)
 void multiplicar_cpu(double *A, double *B, double *C, int n, int m, int k) {
   for (int j = 0; j < m; ++j) {
     for (int i = 0; i < n; ++i) {
-      double soma = 0;
-      for (int idx = 0; idx < k; ++idx) {
-        soma += A[i * k + idx] * B[idx * m + j];
+      if (j <= i) {
+        double soma = 0;
+        for (int idx = 0; idx < k; ++idx) {
+          soma += A[i * k + idx] * B[idx * m + j];
+        }
+        C[i * m + j] = soma / sqrtD; 
+      } else {
+        C[i * m + j] = -INFINITY; 
       }
-      C[i * m + j] = soma; 
     }
   }
 }
@@ -103,10 +110,16 @@ __global__ void softmax(double *A, int n, int m){
   if (i < n) {
     double soma = 0;
     for (int idx = 0; idx < m; ++idx) {
-      soma += exp(A[i * m + idx]);
+      if (A[i * m + idx] != -INFINITY) { // caso contrário, ele não vai conseguir calcular a exponencial 
+        soma += exp(A[i * m + idx]);
+      }
     }
     for (int idx = 0; idx < m; ++idx) {
-      A[i * m + idx] = exp(A[i * m + idx]) / soma;
+      if (A[i * m + idx] != -INFINITY) {
+        A[i * m + idx] = exp(A[i * m + idx]) / soma;
+      } else {
+        A[i * m + idx] = 0;
+      }
     }
   }
 }
@@ -115,10 +128,16 @@ void softmax_cpu(double *A, int n, int m) {
   for (int i = 0; i < n; ++i) {
     double soma = 0;
     for (int idx = 0; idx < m; ++idx) {
-      soma += exp(A[i * m + idx]);
+      if (A[i * m + idx] != -INFINITY) {
+        soma += exp(A[i * m + idx]);
+      }
     }
     for (int idx = 0; idx < m; ++idx) {
-      A[i * m + idx] = exp(A[i * m + idx]) / soma;
+      if (A[i * m + idx] != -INFINITY) {
+        A[i * m + idx] = exp(A[i * m + idx]) / soma;
+      } else {
+        A[i * m + idx] = 0;
+      }
     }
   }
 }
@@ -141,14 +160,9 @@ struct self_attention_head{
     // Define inicialmente valores aleatórios para cada 
     // valor em W_V, W_Q, e W_K
     for (int i = 0; i < D * d_model; ++i) {
-      host_W_V[i] = (double) rand() / RAND_MAX; 
-      host_W_Q[i] = (double) rand() / RAND_MAX; 
-      host_W_K[i] = (double) rand() / RAND_MAX; 
-
-      // Valores menores para verificação
-      host_W_V[i] = rand() % 10;
-      host_W_Q[i] = rand() % 10;
-      host_W_K[i] = rand() % 10;
+      host_W_V[i] = rand_double();
+      host_W_Q[i] = rand_double();
+      host_W_K[i] = rand_double();
     }
 
     // Colocando essas matrizes na GPU
@@ -159,15 +173,15 @@ struct self_attention_head{
     cudaMemcpy(device_W_Q, host_W_Q, D * d_model * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(device_W_K, host_W_K, D * d_model * sizeof(double), cudaMemcpyHostToDevice);
 
-    // Preparando as matrizes V, Q, K para colocarmos 
-    // nossos valores depois de passar 
-    // a matriz de embedding pelas camadas lineares
+    // Alocando espaço para as matrizes 
+    // V, Q, K. Estas serão as matrizes que
+    // resultam das projeções da matriz de 
+    // embedding nas camadas lineares
     cudaMalloc(&device_V, C * D * sizeof(double));
     cudaMalloc(&device_Q, C * D * sizeof(double));
     cudaMalloc(&device_K, C * D * sizeof(double));
 
-    // Auxiliares
-    // Prepara a matriz de embedding na GPU
+    // Aloca espaço para copiarmos a matriz de embedding para a GPU
     cudaMalloc(&device_E, C * d_model * sizeof(double));
 
     // Prepara a matriz transposta de K na GPU
@@ -188,38 +202,82 @@ struct self_attention_head{
     // Copia E para a GPU
     cudaMemcpy(device_E, E, C * d_model * sizeof(double), cudaMemcpyHostToDevice);
 
-    // Faz as transformações lineares na GPU
-    dim3 grid_dim(ceil_div(C, thread_size), ceil_div(D, thread_size));
-    dim3 block_dim(thread_size, thread_size);
-    transformacao_linear<<<grid_dim, block_dim>>>(device_W_V, device_E, device_V, D, d_model, C);
-    transformacao_linear<<<grid_dim, block_dim>>>(device_W_Q, device_E, device_Q, D, d_model, C);
-    transformacao_linear<<<grid_dim, block_dim>>>(device_W_K, device_E, device_K, D, d_model, C);
+    // Faz as transformações lineares paralelamente
+    dim3 grid_dim_tl(ceil_div(C, thread_size), ceil_div(D, thread_size));
+    dim3 block_dim_tl(thread_size, thread_size);
+    transformacao_linear<<<grid_dim_tl, block_dim_tl>>>(device_W_V, device_E, device_V, D, d_model, C);
+    transformacao_linear<<<grid_dim_tl, block_dim_tl>>>(device_W_Q, device_E, device_Q, D, d_model, C);
+    transformacao_linear<<<grid_dim_tl, block_dim_tl>>>(device_W_K, device_E, device_K, D, d_model, C);
+    cudaDeviceSynchronize();
+
+    // Vamos transpor a matriz K para podermos fazer a multiplicação Q(K^T) 
+    dim3 grid_dim_t = grid_dim_tl;
+    dim3 block_dim_t = block_dim_tl;
+    transpor<<<grid_dim_t, block_dim_t>>>(device_K, device_K_transposto, C, D);
     cudaDeviceSynchronize();
     
-    // Vamos transpor o vetor de keys e multiplicar Q * K^T 
-    transpor<<<grid_dim, block_dim>>>(device_K, device_K_transposto, C, D);
+    // Fazemos a multiplicação, gerando uma matriz H de forma (C, C):
+    dim3 grid_dim_m(ceil_div(C, thread_size), ceil_div(C, thread_size));
+    dim3 block_dim_m = block_dim_tl;
+    multiplica_matrizes<<<grid_dim_m, block_dim_m>>>(device_Q, device_K_transposto, device_H, C, C, D, sqrtD);
+    cudaDeviceSynchronize();
 
-    dim3 grid_dim_multiplicacao(ceil_div(C, thread_size), ceil_div(C, thread_size));
-    multiplica_matrizes<<<grid_dim_multiplicacao, block_dim>>>(device_Q, device_K_transposto, device_H, C, C, D);
-
-    int grid_dim_softmax = ceil_div(C, thread_size);
+    // Aplicamos o softmax na matriz resultante da última multiplicação:
+    int grid_dim_s = ceil_div(C, thread_size);
+    int block_dim_s = thread_size;
+    softmax<<<grid_dim_s, block_dim_s>>>(device_H, C, C);
+    cudaDeviceSynchronize();
     
-    softmax<<<grid_dim_softmax, thread_size>>>(device_H, C, C);
-
-    // Testando na cpu
-    double *host_Q = (double *) malloc(C * D * sizeof(double)), 
+    // --- Testando validade da multiplicação e softmax --- 
+    // Aloca espaço e define variáveis
+    double *host_Q = (double *) malloc(C * D * sizeof(double)),
            *host_K = (double *) malloc(C * D * sizeof(double)),
            *host_K_transposto = (double *) malloc(D * C * sizeof(double)),
            *host_H = (double *) malloc(C * C * sizeof(double));
 
+    // Copia as matrizes Q e K que já verificamos estarem corretos
     cudaMemcpy(host_Q, device_Q, C * D * sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(host_K, device_K, C * D * sizeof(double), cudaMemcpyDeviceToHost);
 
-    transpor_cpu(device_K, device_K_transposto, C, D);
+    transpor_cpu(host_K, host_K_transposto, C, D);
     
     multiplicar_cpu(host_Q, host_K_transposto, host_H, C, C, D);
+    
+    // Olhando o resultado da multiplicação antes de fazer o softmax
+    printf("Resultado da multiplicação (pré-softmax):\n");
+    for (int i = 0; i < C; ++i) {
+      for (int j = 0; j < C; ++j) {
+        printf("%lf ", host_H[i * C + j]);
+      }
+      printf("\n");
+    }
 
     softmax_cpu(host_H, C, C);
+
+    // Copia o valor de H calculado na GPU
+    double *device_copy_H = (double *) malloc(C * C * sizeof(double));
+    cudaMemcpy(device_copy_H, device_H, C * C * sizeof(double), cudaMemcpyDeviceToHost);
+    // Faz a verificação dos valores
+    for (int i = 0; i < C; ++i) {
+      for (int j = 0; j < C; ++j) {
+        if (fabs(host_H[i * C + j] - device_copy_H[i * C + j]) > 1e-9) {
+          printf("Deu errado\n");
+          printf("i: %d j: %d\n", i, j);
+          printf("Valor na CPU: %lf\n", host_H[i * C + j]);
+          printf("Valor na GPU: %lf\n", device_copy_H[i * C + j]);
+          return;
+        }
+      }
+    }
+    printf("Deu certo!\n");
+    printf("Resultado da matriz H (pós-softmax):\n");
+    for (int i = 0; i < C; ++i) {
+      for (int j = 0; j < C; ++j) {
+        printf("%lf ", host_H[i * C + j]);
+      }
+      printf("\n");
+    }
+    // --- Fim do teste da multiplicação e softmax--
   }
 };
 
@@ -229,10 +287,7 @@ int main(){
 
   double *E = (double *) malloc(C * d_model * sizeof(double));
   for (int i = 0; i < C * d_model; ++i) {
-    E[i] = (double) rand() / RAND_MAX;
-
-    // Valor menor para teste
-    E[i] = rand() % 10;
+    E[i] = rand_double();
   }
   
   self_attention_head sa;
