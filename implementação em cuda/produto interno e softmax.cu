@@ -1,3 +1,6 @@
+// Após aplicar as camadas lineares na matrix de embedding,
+// gerando Q, K, V, calculamos softmax( Q(K^T) / sqrt(D) )
+
 #include "stdio.h"
 #include "cmath"
 
