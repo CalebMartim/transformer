@@ -1,4 +1,4 @@
-// Implementação completa do Masked Multi-Head Attention 
+// Implementação completa do Masked Multi-Head Attention (não testado ainda)
 
 #include "stdio.h"
 #include "cmath"
