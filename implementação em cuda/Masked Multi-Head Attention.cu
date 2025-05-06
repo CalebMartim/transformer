@@ -1,6 +1,4 @@
-// Após calcular H = softmax(Q(K^T) / sqrt(D)),
-// multiplicamos H por V, finalizando o 
-// cálculo da função de atenção
+// Implementação completa do Masked Multi-Head Attention 
 
 #include "stdio.h"
 #include "cmath"
