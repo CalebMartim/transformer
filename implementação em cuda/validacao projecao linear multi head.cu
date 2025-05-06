@@ -30,7 +30,9 @@ int ceil_div(int a, int b) {
 double rand_double() {
   double min = -1, max = 1;
   double range = (max - min);
-  return min + (double) rand() / (RAND_MAX / range);
+  //return min + (double) rand() / (RAND_MAX / range);
+
+  return rand() % 5;
 }
 
 // Aplica uma camada linear A de forma (k, m) a uma matriz B de forma (n, m)
@@ -48,6 +50,24 @@ __global__ void transformacao_linear(double *A, double *B, double *C, int n, int
       soma += A[(h * k * m) + (j * m) + idx] * B[(i * m) + idx];
     }
     C[(h * n * k) + (i * k) + j] = soma;
+  }
+}
+
+
+// A: (k, m)
+// B: (n, m)
+// C: (n, k) 
+void transformacao_linear_cpu(double *A, double *B, double *C, int n, int m, int k, int num_heads){
+  for (int h = 0; h < num_heads; ++h) {
+    for (int i = 0; i < n; ++i) {
+      for (int j = 0; j < k; ++j) {
+        double soma = 0;
+        for (int idx = 0; idx < m; ++idx) {
+          soma += A[(h * k * m) + (j * m) + idx] * B[(i * m) + idx];
+        }
+        C[(h * n * k) + (i * k) + j] = soma;
+      }
+    }
   }
 }
 
@@ -178,11 +198,11 @@ struct MultiHeadAttention{
     // Matriz auxiliar para fazer a multiplicação entre Q e K^T
     cudaMalloc(&device_H, num_heads * C * C * sizeof(double));
 
-    // Aloca espaço para o resultado final do processo (attention)
     cudaMalloc(&device_A, num_heads * C * D * sizeof(double));
+    
+    // Aloca espaço para o resultado final do processo
     host_A = (double *) malloc(num_heads * C * D * sizeof(double));
 
-    // Aloca espaço para a matriz de concatenação do resultado de todos os heads
     MultiHead = (double *) malloc(C * d_model * sizeof(double));
   }
 
@@ -205,53 +225,164 @@ struct MultiHeadAttention{
     transformacao_linear<<<grid_dim_tl, block_dim_tl>>>(device_W_K, device_E, device_K, C, d_model, D, num_heads);
     cudaDeviceSynchronize();
 
-    // Vamos transpor a matriz K para podermos fazer a multiplicação Q(K^T) 
-    dim3 grid_dim_t = grid_dim_tl;
-    dim3 block_dim_t = block_dim_tl;
-    transpor<<<grid_dim_t, block_dim_t>>>(device_K, device_K_transposto, C, D, num_heads);
-    cudaDeviceSynchronize();
-    
-    // Fazemos a multiplicação, gerando uma matriz H de forma (C, C):
-    dim3 grid_dim_pm(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y), ceil_div(C, block_dim_z));
-    dim3 block_dim_pm = block_dim_tl;
-    primeira_multiplicacao<<<grid_dim_pm, block_dim_pm>>>(device_Q, device_K_transposto, device_H, C, C, D, sqrtD, num_heads);
-    cudaDeviceSynchronize();
+    // --- Testando Transformações lineares: ---
+    printf("Matriz de embedding:\n");
+    for (int i = 0; i < C; ++i) {
+      for (int j = 0; j < d_model; ++j) {
+        printf("%lf ", E[(i * d_model) + j]);
+      }
+      printf("\n");
+    }
 
-    // Aplicamos o softmax na matriz resultante da última multiplicação:
-    dim3 grid_dim_s(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y));
-    dim3 block_dim_s(block_dim_x, block_dim_y);
-    softmax<<<grid_dim_s, block_dim_s>>>(device_H, C, C, num_heads);
-    cudaDeviceSynchronize();
-    
-    // Multiplicamos a matriz H, que tem forma (C, C), com a matriz V
-    // que tem forma (C, D) para finalizarmos o cálculo do attention
-    dim3 grid_dim_sm(ceil_div(num_heads, block_dim_x), ceil_div(D, block_dim_y), ceil_div(C, block_dim_z));
-    dim3 block_dim_sm = block_dim_tl;
-    segunda_multiplicacao<<<grid_dim_sm, block_dim_sm>>>(device_H, device_V, device_A, C, D, C, num_heads);
-    cudaDeviceSynchronize();
-    
-    printf("Não deu runtime error até agora!\n");
-    
-    cudaMemcpy(host_A, device_A, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
-
+    printf("Matrizes de pesos:\n");
     for (int h = 0; h < num_heads; ++h) {
-      for (int i = 0; i < C; ++i) {
-        for (int j = 0; j < D; ++j) {
-          MultiHead[(i * d_model) + (D * h) + j] = host_A[(h * C * D) + (i * D) + j];
-          printf("%lf ", host_A[(h * C * D) + (i * D) + j]);
+      printf("Head: %d\n", h);
+      printf("Matriz W_V:\n");
+      for (int i = 0; i < D; ++i) {
+        for (int j = 0; j < d_model; ++j) {
+          printf("%lf ", host_W_V[(h * D * d_model) + (i * d_model) + j]);
+        }
+        printf("\n");
+      }
+      printf("Matriz W_Q:\n");
+      for (int i = 0; i < D; ++i) {
+        for (int j = 0; j < d_model; ++j) {
+          printf("%lf ", host_W_Q[(h * D * d_model) + (i * d_model) + j]);
+        }
+        printf("\n");
+      }
+      printf("Matriz W_K:\n");
+      for (int i = 0; i < D; ++i) {
+        for (int j = 0; j < d_model; ++j) {
+          printf("%lf ", host_W_K[(h * D * d_model) + (i * d_model) + j]);
         }
         printf("\n");
       }
     }
 
-    printf("Resultado do Multi-Head attention:\n");
-    
-    for (int i = 0; i < C; ++i) {
-      for (int j = 0; j < d_model; ++j) {
-        printf("%lf ", MultiHead[(i * d_model) + j]);
-      } 
-      printf("\n");
+    double *host_V, *host_Q, *host_K;
+    host_V = (double *) malloc(num_heads * C * D * sizeof(double));
+    host_Q = (double *) malloc(num_heads * C * D * sizeof(double));
+    host_K = (double *) malloc(num_heads * C * D * sizeof(double));
+
+    transformacao_linear_cpu(host_W_V, E, host_V, C, d_model, D, num_heads);
+    transformacao_linear_cpu(host_W_Q, E, host_Q, C, d_model, D, num_heads);
+    transformacao_linear_cpu(host_W_K, E, host_K, C, d_model, D, num_heads);
+
+    double *device_copy_V, *device_copy_Q, *device_copy_K;
+    device_copy_V = (double *) malloc(num_heads * C * D * sizeof(double));
+    device_copy_Q = (double *) malloc(num_heads * C * D * sizeof(double));
+    device_copy_K = (double *) malloc(num_heads * C * D * sizeof(double));
+
+    cudaMemcpy(device_copy_V, device_V, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(device_copy_Q, device_Q, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(device_copy_K, device_K, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+
+    for (int h = 0; h < num_heads; ++h) {
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < D; ++j) {
+          if (fabs(host_V[(h * C * D) + (i * D) + j] - device_copy_V[(h * C * D) + (i * D) + j]) > 1e-9) {
+            printf("Erro em V\n");
+            printf("Head: %d\n", h);
+            printf("i: %d j: %d\n", i, j);
+            printf("Valor na CPU: %lf\n", host_V[(h * C * D) + (i * D) + j]);
+            printf("Valor na GPU: %lf\n", device_copy_V[(h * C * D) + (i * D) + j]);
+            return;
+          }
+          if (fabs(host_Q[(h * C * D) + (i * D) + j] - device_copy_Q[(h * C * D) + (i * D) + j]) > 1e-9) {
+            printf("Erro em Q\n");
+            printf("Head: %d\n", h);
+            printf("i: %d j: %d\n", i, j);
+            printf("Valor na CPU: %lf\n", host_Q[(h * C * D) + (i * D) + j]);
+            printf("Valor na GPU: %lf\n", device_copy_Q[(h * C * D) + (i * D) + j]);
+            return;
+          }
+          if (fabs(host_K[(h * C * D) + (i * D) + j] - device_copy_K[(h * C * D) + (i * D) + j]) > 1e-9) {
+            printf("Erro em K\n");
+            printf("Head: %d\n", h);
+            printf("i: %d j: %d\n", i, j);
+            printf("Valor na CPU: %lf\n", host_K[(h * C * D) + (i * D) + j]);
+            printf("Valor na GPU: %lf\n", device_copy_K[(h * C * D) + (i * D) + j]);
+            return;
+          }
+        }
+      }
     }
+
+    printf("Nada de errado na projeção linear!\n");
+    for (int h = 0; h < num_heads; ++h) {
+      printf("Head: %d\n", h);
+      printf("Matriz V:\n");
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < D; ++j) {
+          printf("%lf ", host_V[(h * C * D) + (i * D) + j]);
+        }
+        printf("\n");
+      }
+      printf("Matriz Q:\n");
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < D; ++j) {
+          printf("%lf ", host_Q[(h * C * D) + (i * D) + j]);
+        }
+        printf("\n");
+      }
+      printf("Matriz K:\n");
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < D; ++j) {
+          printf("%lf ", host_K[(h * C * D) + (i * D) + j]);
+        }
+        printf("\n");
+      }
+    }
+    // --- FIm do teste das projeções ---
+
+    // Vamos transpor a matriz K para podermos fazer a multiplicação Q(K^T) 
+    //dim3 grid_dim_t = grid_dim_tl;
+    //dim3 block_dim_t = block_dim_tl;
+    //transpor<<<grid_dim_t, block_dim_t>>>(device_K, device_K_transposto, C, D, num_heads);
+    //cudaDeviceSynchronize();
+    //
+    //// Fazemos a multiplicação, gerando uma matriz H de forma (C, C):
+    //dim3 grid_dim_pm(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y), ceil_div(C, block_dim_z));
+    //dim3 block_dim_pm = block_dim_tl;
+    //primeira_multiplicacao<<<grid_dim_pm, block_dim_pm>>>(device_Q, device_K_transposto, device_H, C, C, D, sqrtD, num_heads);
+    //cudaDeviceSynchronize();
+
+    //// Aplicamos o softmax na matriz resultante da última multiplicação:
+    //dim3 grid_dim_s(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y));
+    //dim3 block_dim_s(block_dim_x, block_dim_y);
+    //softmax<<<grid_dim_s, block_dim_s>>>(device_H, C, C, num_heads);
+    //cudaDeviceSynchronize();
+    //
+    //// Multiplicamos a matriz H, que tem forma (C, C), com a matriz V
+    //// que tem forma (C, D) para finalizarmos o cálculo do attention
+    //dim3 grid_dim_sm(ceil_div(num_heads, block_dim_x), ceil_div(D, block_dim_y), ceil_div(C, block_dim_z));
+    //dim3 block_dim_sm = block_dim_tl;
+    //segunda_multiplicacao<<<grid_dim_sm, block_dim_sm>>>(device_H, device_V, device_A, C, D, C, num_heads);
+    //cudaDeviceSynchronize();
+    //
+    //printf("Não deu runtime error até agora!\n");
+    //
+    //cudaMemcpy(host_A, device_A, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+
+    //for (int h = 0; h < num_heads; ++h) {
+    //  for (int i = 0; i < C; ++i) {
+    //    for (int j = 0; j < D; ++j) {
+    //      MultiHead[(i * d_model) + (D * h) + j] = host_A[(h * C * D) + (i * D) + j];
+    //      printf("%lf ", host_A[(h * C * D) + (i * D) + j]);
+    //    }
+    //    printf("\n");
+    //  }
+    //}
+
+    //printf("resultado do Multi-Head attention:\n");
+    //
+    //for (int i = 0; i < C; ++i) {
+    //  for (int j = 0; j < d_model; ++j) {
+    //    printf("%lf ", MultiHead[(i * d_model) + j]);
+    //  } 
+    //  printf("\n");
+    //}
   }
 };
 
