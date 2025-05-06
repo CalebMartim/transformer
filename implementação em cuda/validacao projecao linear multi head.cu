@@ -1,6 +1,7 @@
-// Após calcular H = softmax(Q(K^T) / sqrt(D)),
-// multiplicamos H por V, finalizando o 
-// cálculo da função de atenção
+// Validação das projeções lineares feitas 
+// com as matrizes de peso W_V, W_Q, W_K
+// e a matriz de embedding E com 
+// múltiplas cabeças
 
 #include "stdio.h"
 #include "cmath"
@@ -71,91 +72,11 @@ void transformacao_linear_cpu(double *A, double *B, double *C, int n, int m, int
   }
 }
 
-// Transpõe uma matriz A de forma (n, m) e coloca o resultado 
-// em B, que tem forma (m, n)
-__global__ void transpor(double *A, double *B, int n, int m, int num_heads) {
-  int h = threadIdx.x + blockDim.x + blockIdx.x;
-  int i = threadIdx.y + blockDim.y * blockIdx.y;
-  int j = threadIdx.z + blockDim.z * blockIdx.z;
-
-  if (h < num_heads and i < n and j < m) {
-    B[(h * m * n) + (j * n) + i] = A[(h * n * m) + (i * m) + j];
-  }
-}
-
-// Multiplica uma matriz A de forma (n, k) com uma matriz B de forma (k, m) 
-// e coloca o resultado na matriz C, que tem forma (n, m)
-// Nesta função, aplicamos o conceito de masked self attention,
-// para que nenum_headsum token obtenum_headsa informações sobre tokens em posições à frente
-// e dividimos todo valor por D por questões de normalização de valores
-__global__ void primeira_multiplicacao(double *A, double *B, double *C, int n, int m, int k, double sqrtD, int num_heads) {
-  int h = threadIdx.x + blockDim.x * blockIdx.x;
-  int j = threadIdx.y + blockDim.y * blockIdx.y;
-  int i = threadIdx.z + blockDim.z * blockIdx.z;
-
-  if (h < num_heads and j < m and i < n) {
-    // No caso de masked attention, só calculamos o produto interno 
-    // Q_i * K_j quando j <= i, para prevenir "spoilers" pro modelo
-    if (j <= i) {
-      double soma = 0;
-      for (int idx = 0; idx < k; ++idx) {
-        soma += A[(h * n * k) + (i * k) + idx] * B[(h * k * m) + (idx * m) + j];
-      }
-      C[(h * n * m) + (i * m) + j] = soma / sqrtD; // A divisão normaliza o resultado 
-    } else {
-      C[(h * n * m) + (i * m) + j] = -INFINITY; 
-    }
-  }
-}
-
-
-// Pega uma matriz A de forma (n, m) e aplica a função softmax
-// em cada uma de suas linum_headsas
-__global__ void softmax(double *A, int n, int m, int num_heads){
-  int h = threadIdx.x + blockDim.x * blockIdx.x;
-  int i = threadIdx.y + blockDim.y * blockIdx.y;
-
-  if (h < num_heads and i < n) {
-    double soma = 0;
-    for (int idx = 0; idx < m; ++idx) {
-      if (A[(h * n * m) + (i * m) + idx] != -INFINITY) { // caso contrário, ele não vai conseguir calcular a exponencial 
-        soma += exp(A[(h * n * m) + (i * m) + idx]);
-      }
-    }
-    for (int idx = 0; idx < m; ++idx) {
-      if (A[(h * n * m) + (i * m) + idx] != -INFINITY) {
-        A[(h * n * m) + (i * m) + idx] = exp(A[(h * n * m) + (i * m) + idx]) / soma;
-      } else {
-        A[(h * n * m) + (i * m) + idx] = 0;
-      }
-    }
-  }
-}
-
-// Multiplica uma matriz A de forma (n, k) com uma matriz B de forma (k, m) 
-// e coloca o resultado na matriz C, que tem forma (n, m)
-__global__ void segunda_multiplicacao(double *A, double *B, double *C, int n, int m, int k, int num_heads) {
-  int h = threadIdx.x + blockDim.x * blockIdx.x;
-  int j = threadIdx.y + blockDim.y * blockIdx.y;
-  int i = threadIdx.z + blockDim.z * blockIdx.z;
-
-  if (h < num_heads and j < m and i < n) {
-    double soma = 0;
-    for (int idx = 0; idx < k; ++idx) {
-      soma += A[(h * n * k) + (i * k) + idx] * B[(h * k * m) + (idx * m) + j];
-    }
-    C[(h * n * m) + (i * m) + j] = soma;
-  }
-}
-
 struct MultiHeadAttention{
   double *host_W_V, *host_W_Q, *host_W_K;
   double *device_W_V, *device_W_Q, *device_W_K, 
-         *device_V, *device_Q, *device_K,
-         *device_K_transposto;
-  double *device_E, *device_H, *device_A;
-  double *host_A;
-  double *MultiHead;
+         *device_V, *device_Q, *device_K;
+  double *device_E;
 
   MultiHeadAttention(){
     // As seguintes são camadas lineares que transformam a
@@ -191,19 +112,6 @@ struct MultiHeadAttention{
     // Aloca espaço para copiarmos a matriz de embedding para a GPU
     // (não precisa multiplicar por num_heads porque é único através das heads)
     cudaMalloc(&device_E, C * d_model * sizeof(double)); 
-
-    // Prepara a matriz transposta de K na GPU
-    cudaMalloc(&device_K_transposto, num_heads * D * C * sizeof(double));
-
-    // Matriz auxiliar para fazer a multiplicação entre Q e K^T
-    cudaMalloc(&device_H, num_heads * C * C * sizeof(double));
-
-    cudaMalloc(&device_A, num_heads * C * D * sizeof(double));
-    
-    // Aloca espaço para o resultado final do processo
-    host_A = (double *) malloc(num_heads * C * D * sizeof(double));
-
-    MultiHead = (double *) malloc(C * d_model * sizeof(double));
   }
 
   void pass_embedding(double *E){
@@ -260,24 +168,27 @@ struct MultiHeadAttention{
       }
     }
 
+    // Resultados das transformações na CPU
     double *host_V, *host_Q, *host_K;
     host_V = (double *) malloc(num_heads * C * D * sizeof(double));
     host_Q = (double *) malloc(num_heads * C * D * sizeof(double));
     host_K = (double *) malloc(num_heads * C * D * sizeof(double));
 
+    // Aplicação da transfornacao
     transformacao_linear_cpu(host_W_V, E, host_V, C, d_model, D, num_heads);
     transformacao_linear_cpu(host_W_Q, E, host_Q, C, d_model, D, num_heads);
     transformacao_linear_cpu(host_W_K, E, host_K, C, d_model, D, num_heads);
 
+    // Copiando para o host o resultado calculado na GPU
     double *device_copy_V, *device_copy_Q, *device_copy_K;
     device_copy_V = (double *) malloc(num_heads * C * D * sizeof(double));
     device_copy_Q = (double *) malloc(num_heads * C * D * sizeof(double));
     device_copy_K = (double *) malloc(num_heads * C * D * sizeof(double));
-
     cudaMemcpy(device_copy_V, device_V, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(device_copy_Q, device_Q, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(device_copy_K, device_K, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
 
+    // Validação de fato:
     for (int h = 0; h < num_heads; ++h) {
       for (int i = 0; i < C; ++i) {
         for (int j = 0; j < D; ++j) {
@@ -335,54 +246,6 @@ struct MultiHeadAttention{
       }
     }
     // --- FIm do teste das projeções ---
-
-    // Vamos transpor a matriz K para podermos fazer a multiplicação Q(K^T) 
-    //dim3 grid_dim_t = grid_dim_tl;
-    //dim3 block_dim_t = block_dim_tl;
-    //transpor<<<grid_dim_t, block_dim_t>>>(device_K, device_K_transposto, C, D, num_heads);
-    //cudaDeviceSynchronize();
-    //
-    //// Fazemos a multiplicação, gerando uma matriz H de forma (C, C):
-    //dim3 grid_dim_pm(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y), ceil_div(C, block_dim_z));
-    //dim3 block_dim_pm = block_dim_tl;
-    //primeira_multiplicacao<<<grid_dim_pm, block_dim_pm>>>(device_Q, device_K_transposto, device_H, C, C, D, sqrtD, num_heads);
-    //cudaDeviceSynchronize();
-
-    //// Aplicamos o softmax na matriz resultante da última multiplicação:
-    //dim3 grid_dim_s(ceil_div(num_heads, block_dim_x), ceil_div(C, block_dim_y));
-    //dim3 block_dim_s(block_dim_x, block_dim_y);
-    //softmax<<<grid_dim_s, block_dim_s>>>(device_H, C, C, num_heads);
-    //cudaDeviceSynchronize();
-    //
-    //// Multiplicamos a matriz H, que tem forma (C, C), com a matriz V
-    //// que tem forma (C, D) para finalizarmos o cálculo do attention
-    //dim3 grid_dim_sm(ceil_div(num_heads, block_dim_x), ceil_div(D, block_dim_y), ceil_div(C, block_dim_z));
-    //dim3 block_dim_sm = block_dim_tl;
-    //segunda_multiplicacao<<<grid_dim_sm, block_dim_sm>>>(device_H, device_V, device_A, C, D, C, num_heads);
-    //cudaDeviceSynchronize();
-    //
-    //printf("Não deu runtime error até agora!\n");
-    //
-    //cudaMemcpy(host_A, device_A, num_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
-
-    //for (int h = 0; h < num_heads; ++h) {
-    //  for (int i = 0; i < C; ++i) {
-    //    for (int j = 0; j < D; ++j) {
-    //      MultiHead[(i * d_model) + (D * h) + j] = host_A[(h * C * D) + (i * D) + j];
-    //      printf("%lf ", host_A[(h * C * D) + (i * D) + j]);
-    //    }
-    //    printf("\n");
-    //  }
-    //}
-
-    //printf("resultado do Multi-Head attention:\n");
-    //
-    //for (int i = 0; i < C; ++i) {
-    //  for (int j = 0; j < d_model; ++j) {
-    //    printf("%lf ", MultiHead[(i * d_model) + j]);
-    //  } 
-    //  printf("\n");
-    //}
   }
 };
 
