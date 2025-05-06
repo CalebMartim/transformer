@@ -52,7 +52,7 @@ __global__ void transformacao_linear(double *A, double *B, double *C, int n, int
 // Transpõe uma matriz A de forma (n, m) e coloca o resultado 
 // em B, que tem forma (m, n)
 __global__ void transpor(double *A, double *B, int n, int m, int num_heads) {
-  int h = threadIdx.x + blockDim.x + blockIdx.x;
+  int h = threadIdx.x + blockDim.x * blockIdx.x;
   int i = threadIdx.y + blockDim.y * blockIdx.y;
   int j = threadIdx.z + blockDim.z * blockIdx.z;
 
