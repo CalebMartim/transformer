@@ -135,12 +135,12 @@ o = (e - 1) / (e + 1)
 # Backpropagation
 o.backward_pass()
 
-print(w1.grad, w2.grad, b.grad, x1.grad, x2.grad)
+# print(w1.grad, w2.grad, b.grad, x1.grad, x2.grad)
 
 a = Value(1.0)
 b = a + a
 b.backward_pass()
-print(a.grad)
+# print(a.grad)
 
 a = Value(-2.0)
 b = Value(3)
@@ -148,7 +148,7 @@ c = a + b
 d = a * b
 e = c * d
 e.backward_pass()
-print(a.grad, b.grad)
+# print(a.grad, b.grad)
 
 import random
 
@@ -164,6 +164,9 @@ class Neuron:
     out = act.tanh()
     return out
 
+  def parameters(self):
+    return self.w + [self.b]
+
 class Layer:
   def __init__(self, nin, nout):
     self.neurons = [Neuron(nin) for _ in range(nout)]
@@ -172,6 +175,9 @@ class Layer:
     act = [n(x) for n in self.neurons]
     act = [x.tanh() for x in act]
     return act[0] if len(act) == 1 else act
+  
+  def parameters(self):
+    return [p for neuron in self.neurons for p in neuron.parameters()]
   
 class MLP:
   def __init__(self, nin, nouts):
@@ -183,12 +189,16 @@ class MLP:
       x = layer(x)
     return x
 
+  def parameters(self):
+    return [p for layer in self.layers for p in layer.parameters()]
+  
+
 nin = n
 nouts = [4, 4, 1]
 x = [Value(random.uniform(-1, 1)) for _ in range(n)]
 mlp = MLP(nin, nouts)
 
-print(mlp(x))
+# print(mlp(x))
 
 
 ## Exemplo de treinamento:
@@ -202,35 +212,51 @@ xs = [
 ]
 
 # Saída esperada para cada valor
+
 ys = [1.0, -1.0, -1.0, 1.0] 
-print(ys)
+
 ypred = [mlp(x) for x in xs]
-print(ypred)
-
 loss = sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, ypred)])
-
-print(loss)
-
-for layer in mlp.layers:
-  for neuron in layer.neurons:
-    for W in neuron.w:
-      pass
-      # print(W.grad)
 
 loss.backward_pass()
 
-for layer in mlp.layers:
-  for neuron in layer.neurons:
-    for W in neuron.w:
-      print(W.grad)
-      W = W - 0.001 * W.grad
+for p in mlp.parameters():
+  p.data += -0.01 * p.grad
 
-print('divisor')
-for layer in mlp.layers:
-  for neuron in layer.neurons:
-    for W in neuron.w:
-      print(W)
+for i in range(100):
+  ypred = [mlp(x) for x in xs]
+  loss = sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, ypred)])
 
-y2pred = [mlp(x) for x in xs]
+  print(loss)
 
-print(sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, y2pred)]))
+  loss.backward_pass()
+  
+  for p in mlp.parameters():
+    p.data += -0.05 * p.grad
+    # print(p.grad)
+    # p.grad = 0
+
+print(ypred)
+
+# for layer in mlp.layers:
+#   for neuron in layer.neurons:
+#     neuron.w = [W - 0.001 * W.grad for W in neuron.w]
+#     neuron.b = neuron.b - 0.001 * neuron.b.grad 
+
+
+
+#y2pred = [mlp(x) for x in xs]
+
+#print(ypred) 
+#print(y2pred)
+# print(mlp.parameters())
+
+#loss2 = sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, y2pred)])
+
+# print(loss, loss2)
+#if loss2.data < loss.data:
+#  print("deu certo aqui")
+#elif loss == loss2:
+#  print("Não fez diferença")
+#else:
+#  print("Piorou")
