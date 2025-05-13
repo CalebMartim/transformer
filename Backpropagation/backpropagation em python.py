@@ -1,7 +1,7 @@
 # Bibliotecas
 import math
 import numpy as np
-from collections import deque
+# import torch
 
 # Equivalente a um neurônio
 class Value:
@@ -53,6 +53,9 @@ class Value:
   def __sub__(self, other):
     return self + (-other)
 
+  def __rsub__(self, other):
+    return other + (-self)
+  
   def __pow__(self, other):
     assert isinstance(other, (int, float)), "Não implementado expor por Value"
     out = Value(self.data ** other, [self])
@@ -147,7 +150,6 @@ e = c * d
 e.backward_pass()
 print(a.grad, b.grad)
 
-import torch
 import random
 
 n = 3
@@ -181,9 +183,54 @@ class MLP:
       x = layer(x)
     return x
 
-nin = 3
+nin = n
 nouts = [4, 4, 1]
 x = [Value(random.uniform(-1, 1)) for _ in range(n)]
 mlp = MLP(nin, nouts)
 
 print(mlp(x))
+
+
+## Exemplo de treinamento:
+
+# Batch de treinamento
+xs = [
+  [2.0, 3.0, -1.0],
+  [3.0, -1.0, 0.5],
+  [0.5, 1.0, 1.0],
+  [1.0, 1.0, -1.0]
+]
+
+# Saída esperada para cada valor
+ys = [1.0, -1.0, -1.0, 1.0] 
+print(ys)
+ypred = [mlp(x) for x in xs]
+print(ypred)
+
+loss = sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, ypred)])
+
+print(loss)
+
+for layer in mlp.layers:
+  for neuron in layer.neurons:
+    for W in neuron.w:
+      pass
+      # print(W.grad)
+
+loss.backward_pass()
+
+for layer in mlp.layers:
+  for neuron in layer.neurons:
+    for W in neuron.w:
+      print(W.grad)
+      W = W - 0.001 * W.grad
+
+print('divisor')
+for layer in mlp.layers:
+  for neuron in layer.neurons:
+    for W in neuron.w:
+      print(W)
+
+y2pred = [mlp(x) for x in xs]
+
+print(sum([(ydesejado - yout)**2 for ydesejado, yout in zip(ys, y2pred)]))
