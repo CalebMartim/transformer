@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <queue>
+#include <cmath>
 
 using namespace std;
 using ld = long double;
@@ -18,14 +19,16 @@ struct value{
   value *left_child, *right_child;  
   string op;
   int id; 
+  ld expoente;
 
-  value(ld data = 0, value *left_child = nullptr, value *right_child = nullptr, string op = ""){
+  value(ld data = 0, value *left_child = nullptr, value *right_child = nullptr, string op = "", ld expoente = 0){
     this->data = data;
     this->grad = 0;
     this->left_child = left_child;
     this->right_child = right_child;
     this->op = op;
     this->id = size(values);
+    this->expoente = expoente;
     values.push_back(this);
   }
 
@@ -58,16 +61,48 @@ struct value{
   friend value operator*(ld b, value a) {
     return a * b;
   }
+  
+  value operator-() {
+    return (*this) * -1;
+  }
+
+  value operator-(value b) {
+   return (*this) + -b;
+  }
+
+  friend value operator-(ld b, value a) {
+    return b + -a;
+  }
+
+  value pow(ld k) {
+    return value(powl(this->data, k), this, nullptr, "pow", k);
+  }
+
+  value operator/(value b) {
+    return (*this) * b.pow(-1);
+  }
+
+  friend value operator/(ld b, value a) {
+    return a.pow(-1) * b;
+  }
+
+  value exp() {
+    return value(powl(2.718281828459045, this->data), this, nullptr, "exp");
+  }
 
   void prop() {
     string op = this->op;
     if (op == "+") {
       this->left_child->grad += this->grad;
       this->right_child->grad += this->grad;
-    } else if(op == "*") {
+    } else if (op == "*") {
       this->left_child->grad += this->right_child->data * this->grad;
       this->right_child->grad += this->left_child->data * this->grad;
-    } 
+    } else if (op == "exp") {
+      this->left_child->grad += this->left_child->data * this->grad;
+    } else if (op == "pow") {
+      this->left_child->grad += this->expoente * powl(this->left_child->data, this->expoente - 1) * this->grad;
+    }
   }
 
   void backward_pass(){
@@ -125,4 +160,5 @@ int main(){
   cout << "y: " << y.grad << '\n';
   cout << "z: " << z.grad << '\n';
 
+  
 }
