@@ -65,8 +65,8 @@ struct value{
       this->left_child->grad += this->grad;
       this->right_child->grad += this->grad;
     } else if(op == "*") {
-      this->left_child->grad += this->right_child->data;
-      this->right_child->grad += this->left_child->data;
+      this->left_child->grad += this->right_child->data * this->grad;
+      this->right_child->grad += this->left_child->data * this->grad;
     } 
   }
 
@@ -124,5 +124,5 @@ int main(){
   cout << "x: " << x.grad << '\n';
   cout << "y: " << y.grad << '\n';
   cout << "z: " << z.grad << '\n';
-  
+
 }
