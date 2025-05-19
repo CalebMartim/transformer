@@ -1,13 +1,14 @@
 // Vamos fazer um valor que implementa backpropagation [x] 
-// Vamos construir um neuron
-// Vamos construir um layer
-// Vamos construir uma MLP
+// Vamos construir um neuron [x]
+// Vamos construir um layer [x]
+// Vamos construir uma MLP [x]
 
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <iomanip>
 
 using namespace std;
 using ld = long double;
@@ -224,6 +225,7 @@ struct MLP{
 };
 
 int main(){
+  cout << fixed << setprecision(6);
   {
   cout << "Teste 1:\n";
 
@@ -269,26 +271,71 @@ int main(){
     cout << "Rede neural:\n";
     vector<int> tamamhos = {3, 4, 4, 1};
     MLP mlp(tamamhos);
-    vector<valor> v  = {2.0, 3.0, -1.0};
-    vector<valor> res = mlp.pass(v);
-    valor expected = 1;
-    cout << expected << ' ' << res[0] << '\n';
-    valor erro = (res[0] - expected).pow(2);
-    cout << "Tamanho do erro na tentativa 1:\n";
-    cout << erro.data << '\n';
-    erro.backward_pass();
-    cout << "Aprendendo com os erros...\n";
-    for (layer & l : mlp.layers) {
-      for (neuron & n : l.neurons) {
-        for (valor & w : n.pesos) {
-          w.data += -0.05 * grad[w.id]; 
+
+    vector<vector<valor>> entradas = {
+      {2.0, 3.0, -1.0},
+      {3.0, -1.0, 0.5},
+      {0.5, 1.0, 1.0},
+      {1.0, 1.0, -1.0}
+    };
+
+    vector<valor> valores_esperados = {1.0, -1.0, -1.0, 1.0};
+
+    vector<valor> valores_obtidos;
+
+    cout << "Valores esperados:\n";
+    for (int i = 0; i < 4; ++i) {
+      cout << valores_esperados[i].data << ' ';
+    }
+    cout << '\n';
+
+    valor custo = 0;
+    // Vamos fazer aqui os treinamentos
+    for (int _ = 0; _ < 301; ++_) {
+      valores_obtidos.clear();
+      for (vector<valor> & entrada : entradas) {
+        valores_obtidos.push_back(mlp.pass(entrada)[0]);
+      }     
+
+      custo = 0;
+      for (int i = 0; i < 4; ++i) {
+        custo = custo + (valores_esperados[i] - valores_obtidos[i]).pow(2);
+      }
+
+      if (_ == 0) {
+        cout << "Valores obtidos no primeiro teste:\n";
+        for (int i = 0; i < 4; ++i) {
+          cout << valores_obtidos[i].data << ' '; 
+        }
+        cout << '\n';
+        cout << "Cálculo do erro: " << custo.data << '\n';
+      }
+
+      for (layer & l : mlp.layers) {
+        for (neuron & n : l.neurons) {
+          for (valor & w : n.pesos) {
+            grad[w.id] = 0.25 * grad[w.id];
+          }
+        }
+      }
+
+      custo.backward_pass();
+
+      for (layer & l : mlp.layers) {
+        for (neuron & n : l.neurons) {
+          for (valor & w : n.pesos) {
+            w.data += -0.10 * grad[w.id];
+          }
         }
       }
     }
-    res = mlp.pass(v);
-    cout << expected << ' ' << res[0] << '\n';
-    erro = (res[0] - expected).pow(2);
-    cout << "Tamanho do erro na tentativa 2:\n";
-    cout << erro.data << '\n';
+
+    cout << "Valores obtidos após 300 passos de treinamento:\n";
+    for (int i = 0; i < 4; ++i) {
+      cout << valores_obtidos[i].data << ' ';
+    }
+    cout << '\n';
+    cout << "Cálculo do erro: " << custo.data << '\n';
   }
+  cout << "Valores totais guardados na memória: " << size(valores) << '\n';
 }
