@@ -1,0 +1,3 @@
+sqrtD estava int, tinha que ser double
+
+na projeção linear, havia um x que tinha que ser mudado para y
