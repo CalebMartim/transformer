@@ -171,6 +171,11 @@ struct multihead_attention{
       host_W_O[i] = rand_double();
     }
 
+    cudaMalloc(&device_W_V, n_heads * D * d_model * sizeof(double));
+    cudaMalloc(&device_W_Q, n_heads * D * d_model * sizeof(double));
+    cudaMalloc(&device_W_K, n_heads * D * d_model * sizeof(double));
+    cudaMalloc(&device_W_O, d_model * d_model * sizeof(double));
+
     cudaMemcpy(device_W_V, host_W_V, n_heads * D * d_model * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(device_W_Q, host_W_Q, n_heads * D * d_model * sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(device_W_K, host_W_K, n_heads * D * d_model * sizeof(double), cudaMemcpyHostToDevice);
@@ -190,7 +195,7 @@ struct multihead_attention{
     cudaMalloc(&device_V, n_heads * C * D * sizeof(double));
     cudaMalloc(&device_Q, n_heads * C * D * sizeof(double));
     cudaMalloc(&device_K, n_heads * C * D * sizeof(double));
-      
+
     // Cálculo das projeções lineares
     dim3 grid_dim_pl(ceil_div(n_heads, block_size_x), ceil_div(C, block_size_y), ceil_div(D, block_size_z));
     dim3 block_dim_pl(block_size_x, block_size_y, block_size_z);
@@ -198,6 +203,49 @@ struct multihead_attention{
     projecao_linear<<<grid_dim_pl, block_dim_pl>>>(device_W_Q, device_E, device_Q, C, D, d_model, n_heads);
     projecao_linear<<<grid_dim_pl, block_dim_pl>>>(device_W_K, device_E, device_K, C, D, d_model, n_heads);
     cudaDeviceSynchronize();
+
+    double *host_V = (double *) malloc(n_heads * C * D * sizeof(double));
+    cudaMemcpy(host_V, device_V, n_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+
+    printf("V:\n");
+    for (int i = 0; i < n_heads; ++i) {
+      printf("Head %d:\n", i);
+      for (int j = 0; j < C; ++j) {
+        for (int k = 0; k < D; ++k) {
+          printf("%lf ", host_V[(i * C * D) + (j * D) + k]);
+        } 
+        printf("\n");
+      }
+    }
+    printf("\n");
+
+    double *host_Q = (double *) malloc(n_heads * C * D * sizeof(double));
+    cudaMemcpy(host_Q, device_Q, n_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("Q:\n");
+    for (int i = 0; i < n_heads; ++i) {
+      printf("Head %d:\n", i);
+      for (int j = 0; j < C; ++j) {
+        for (int k = 0; k < D; ++k) {
+          printf("%lf ", host_Q[(i * C * D) + (j * D) + k]);
+        } 
+        printf("\n");
+      }
+    }
+    printf("\n");
+
+    double *host_K = (double *) malloc(n_heads * C * D * sizeof(double));
+    cudaMemcpy(host_K, device_K, n_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("K:\n");
+    for (int i = 0; i < n_heads; ++i) {
+      printf("Head %d:\n", i);
+      for (int j = 0; j < C; ++j) {
+        for (int k = 0; k < D; ++k) {
+          printf("%lf ", host_K[(i * C * D) + (j * D) + k]);
+        } 
+        printf("\n");
+      }
+    }
+    printf("\n");
 
     // Transpõe a matriz K
     double *device_K_transposto;
@@ -207,6 +255,20 @@ struct multihead_attention{
     transpor<<<grid_dim_t, block_dim_t>>>(device_K, device_K_transposto, C, D, n_heads);
     cudaDeviceSynchronize();
     
+    double *host_K_transposto = (double *) malloc(n_heads * D * C * sizeof(double));
+    cudaMemcpy(host_K_transposto, device_K_transposto, n_heads * D * C * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("K transposto:\n");
+    for (int h = 0; h < n_heads; ++h) {
+      printf("Head %d:\n", h);
+      for (int i = 0; i < D; ++i) {
+        for (int j = 0; j < C; ++j) {
+          printf("%lf ", host_K_transposto[(h * D * C) + (i * C) + j]);
+        }
+        printf("\n");
+      }
+    }
+    printf("\n");
+    
     // Multiplicação Q por K^T
     double *device_H;
     cudaMalloc(&device_H, n_heads * C * C * sizeof(double));
@@ -215,11 +277,36 @@ struct multihead_attention{
     produto_interno<<<grid_dim_pi, block_dim_pi>>>(device_Q, device_K_transposto, device_H, C, D, n_heads, sqrtD);
     cudaDeviceSynchronize();
 
+    double *host_H = (double *) malloc(n_heads * C * C * sizeof(double));
+    cudaMemcpy(host_H, device_H, n_heads * C * C * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("Device H\n");
+    for (int h = 0; h < n_heads; ++h) {
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < C; ++j) {
+          printf("%lf ", host_H[(h * C * C) + (i * C) + j]);
+        }
+        printf("\n");
+      }
+    }
+    printf("\n");
+
     // Aplica softmax em H
     dim3 grid_dim_s(ceil_div(n_heads, block_size_x), ceil_div(C, block_size_y));
     dim3 block_dim_s(block_size_x, block_size_y);
     softmax<<<grid_dim_s, block_dim_s>>>(device_H, C, n_heads);
     cudaDeviceSynchronize();
+    
+    cudaMemcpy(host_H, device_H, n_heads * C * C * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("Softmax:\n");
+    for (int h = 0; h < n_heads; ++h) {
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < C; ++j) {
+          printf("%lf ", host_H[(h * C * C) + (i * C) + j]);
+        }
+        printf("\n");
+      }
+    }
+    printf("\n");
 
     // Obtém Attention em cada head 
     double *device_A;
@@ -229,20 +316,45 @@ struct multihead_attention{
     matmul<<<grid_dim_mm, block_dim_mm>>>(device_H, device_V, device_A, C, D, n_heads);
     cudaDeviceSynchronize();
 
+    double *host_A = (double *) malloc(n_heads * C * D * sizeof(double));
+    cudaMemcpy(host_A, device_A, n_heads * C * D * sizeof(double), cudaMemcpyDeviceToHost);
+    printf("Device A:\n");
+    for (int h = 0; h < n_heads; ++h) {
+      for (int i = 0; i < C; ++i) {
+        for (int j = 0; j < D; ++j) {
+          printf("%lf ", host_A[(h * C * D) + (i * D) + j]);
+        }
+        printf("\n");
+      }
+    }
+    printf("\n");
+
     // Concatena tudo em concat
     double *device_concat;
     cudaMalloc(&device_concat, C * d_model * sizeof(double));
     dim3 grid_dim_c = grid_dim_pl;
-    dim3 block_dim_c = grid_dim_pl;
+    dim3 block_dim_c = block_dim_pl;
     concat<<<grid_dim_c, block_dim_c>>> (device_A, device_concat, C, D, n_heads);
     cudaDeviceSynchronize();
+
+    double *host_concat = (double *) malloc(C * d_model * sizeof(double));
+    cudaMemcpy(host_concat, device_concat, C * d_model * sizeof(double), cudaMemcpyDeviceToHost);
+      
+    printf("Concat:\n");
+    for (int i = 0; i < C; ++i) {
+      for (int j = 0; j < d_model; ++j) {
+        printf("%lf ", host_concat[(i * d_model) + j]);
+      }
+      printf("\n");
+    }
+    printf("\n");
 
     // Calcula o resultado final de multihead
     double *multihead; 
     cudaMalloc(&multihead, C * d_model * sizeof(double));
     dim3 grid_dim_pf(ceil_div(d_model, block_size_x), ceil_div(C, block_size_y));
     dim3 block_dim_pf = block_dim_s;
-    projecao_final<<<grid_dim_pf, block_dim_pf>>>(device_concat, device_W_O, multihead, C, D);
+    projecao_final<<<grid_dim_pf, block_dim_pf>>>(device_concat, device_W_O, multihead, C, d_model);
     cudaDeviceSynchronize();
 
     cudaMemcpy(host_multihead, multihead, C * d_model * sizeof(double), cudaMemcpyDeviceToHost);
@@ -252,14 +364,17 @@ struct multihead_attention{
 };
 
 int main(){
+  srand(998244353);
+
   double *E = (double *) malloc(C * d_model * sizeof(double));
   for (int i = 0; i < C * d_model; ++i) {
     E[i] = rand_double();
   }
 
   multihead_attention mha;
-  double *res = (double *) malloc(C * d_model * sizeof(double)); 
-  res = mha.pass(E);
+  double *res =  mha.pass(E);
+
+  printf("Resultado do attention:\n");
 
   for (int i = 0; i < C; ++i) {
     for (int j = 0; j < d_model; ++j) {

@@ -1,3 +1,11 @@
 sqrtD estava int, tinha que ser double
 
 na projeção linear, havia um x que tinha que ser mudado para y
+
+havia esquecido de alocar memória na GPU para device_W_V, device_W_Q, device_W_K, device_W_O
+
+em "dim3 block_dim_c = grid_dim_pl;"
+grid_dim_pl deveria ser block_dim_pl
+
+em "projecao_final<<<grid_dim_pf, block_dim_pf>>>(device_concat, device_W_O, multihead, C, D);"
+D deveria ser trocado por d_model

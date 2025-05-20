@@ -172,8 +172,6 @@ struct MultiHeadAttention{
       host_W_V[i] = rand_double();
       host_W_Q[i] = rand_double();
       host_W_K[i] = rand_double();
-    }
-    for (int i = 0; i < d_model * d_model; ++i) {
       host_W_O[i] = rand_double();
     }
 
@@ -270,7 +268,7 @@ struct MultiHeadAttention{
     cudaDeviceSynchronize();
 
     // Projeção final com a matriz de output
-    dim3 grid_dim_mf(ceil_div(D, block_dim_x), ceil_div(C, block_dim_y));
+    dim3 grid_dim_mf(ceil_div(d_model, block_dim_x), ceil_div(C, block_dim_y));
     dim3 block_dim_mf(block_dim_x, block_dim_y);
     matmul_final<<<grid_dim_mf, block_dim_mf>>>(device_concat, device_W_O, device_multihead, C, d_model);
     cudaDeviceSynchronize();
