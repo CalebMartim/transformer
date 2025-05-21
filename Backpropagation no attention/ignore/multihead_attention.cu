@@ -52,30 +52,17 @@ struct valor{
   ld data;
   valor* left_child, *right_child;  
   int op;
-  int id; 
   ld expoente;
   ld grad = 0;
 
-  __device__ __host__ valor(ld _data = 0, valor *_left_child = nullptr, valor * _right_child = nullptr, int _op = 0, ld _expoente = 0) {
+  __device__ __host__ 
+  valor(ld _data = 0, valor *_left_child = nullptr, valor * _right_child = nullptr, int _op = 0, ld _expoente = 0) {
     data = _data;
     left_child = _left_child;
     right_child = _right_child;
     op = _op;
     expoente = _expoente;
     grad = 0;
-  }
-
-  __device__ __host__ valor operator+(valor &b) {
-    return valor(data + b.data, this, &b, 1);
-  }
-  
-  __device__ __host__ valor operator*(valor &b) {
-    return valor(data * b.data, this, &b, 2);
-  }
-
-  __device__ __host__ valor operator-() {
-    valor x(-1);
-    return (*this) * x;
   }
 
   __device__ __host__ valor operator-(valor &b) {
@@ -118,6 +105,7 @@ struct valor{
     vector<valor*> top_sort;
     unordered_set<valor*> vis;
     auto dfs = [&](valor *v, auto &&self) -> void {
+      printf("%p\n", v);
       if (vis.count(v)) return;
       vis.insert(v);
       if(v->left_child) {
@@ -138,6 +126,45 @@ struct valor{
   }
 };
 
+struct ValorArena {
+  valor* pool;
+  int capacity;
+  int *index; 
+  
+  __device__ 
+  valor *alloc(double x, valor *left, valor *right, int op = 0, double k = 0){
+    int i = atomicAdd(index, 1);
+    if (i < capacity) {
+      return new (&pool[i]) valor(x, left, right, op, k);
+    }
+    return nullptr;
+  } 
+};
+
+__device__ 
+valor* operator+(valor &a, valor &b, ValorArena & arena) {
+  valor* out;
+  cudaMallocManaged(&out, sizeof(valor));
+  new (out) valor(a.data + b.data, &a, &b, 1);
+  return out;
+}
+
+__device__ __host__ 
+valor* operator*(valor &a, valor &b) {
+  valor* out;
+  cudaMallocManaged(&out, sizeof(valor));
+  new (out) valor(a.data * b.data, &a, &b, 2);
+  return out;
+}
+
+__device__ __host__ 
+valor* operator-(valor &a) {
+  valor *aux;
+  cudaMallocManaged(&aux, sizeof(valor));
+  new (aux) valor(-1);
+  return a * (*aux);
+}
+
 
 const valor sqrtD = sqrtl(D);
 
@@ -152,7 +179,9 @@ __global__ void projecao_linear(valor *device_W_X, valor *device_E, valor *devic
   if (h < n_heads and i < C and j < D) {
     valor soma = 0;
     for (int idx = 0; idx < d_model; ++idx) {
-      soma = device_W_X[(h * D * d_model) + (j * d_model) + idx] * device_E[(i * d_model) + idx];
+      valor n = device_W_X[(h * D * d_model) + (j * d_model) + idx] * device_E[(i * d_model) + idx];
+      valor aux = soma;
+      soma = *(aux + n);
     }
     device_X[(h * C * D) + (i * D) + j] = soma;
   }
@@ -492,10 +521,12 @@ int main(){
   for (int i = 0; i < C; ++i) {
     for (int j = 0; j < d_model; ++j) {
       printf("%lf ", res[(i * d_model) + j].data);
-      custo = custo + res[(i * d_model) + j];
+      custo = valor(custo.data) + res[(i * d_model) + j];
     }
     printf("\n");
   }
-  printf("%lf ", custo.data);
+  printf("%lf\n", custo.data);
+  custo.backward_pass();
+  printf("Não quebrou\n");
 }
 
