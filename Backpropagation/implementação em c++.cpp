@@ -47,8 +47,7 @@ struct valor{
   }
   
   valor operator+(double b) {
-    valor x(b);
-    return (*this) + x;
+    return (*this) + valor(b);
   }
 
   friend valor operator+(double x, valor a) {
@@ -60,8 +59,7 @@ struct valor{
   }
 
   valor operator*(double b) {
-    valor x(b);
-    return (*this) * x;
+    return (*this) * valor(b);
   }
 
   friend valor operator*(double b, valor a) {

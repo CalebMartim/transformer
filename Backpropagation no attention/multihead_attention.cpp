@@ -5,7 +5,6 @@ const int d_model = 4;
 const int n_heads = 2;
 const int C = 2; // Janela de contexto
 const int D = d_model / n_heads; // d_k 
-const int block_size_x = 8, block_size_y = 8, block_size_z = 16;
 const double sqrtD = sqrtl(D);
 
 // funções auxiliares:

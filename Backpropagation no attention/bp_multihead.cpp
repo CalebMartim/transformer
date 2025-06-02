@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <random>
+#include <chrono>
 
 using namespace std;
 
@@ -483,6 +485,19 @@ int main(){
   cout << "Taxa de erro: " << erro1 << '\n';
   cout << "Depois de aprender com os erros...\n";
   cout << "Taxa de erro: " << erro << '\n';
+
+  vector<double> weights;
+  
+  for (int i = 0; i < d_model; ++i) {
+    weights.push_back(0.25);
+  }
+
+  discrete_distribution<int> dis(weights.begin(), weights.end());
+
+  mt19937 gen(chrono::steady_clock::now().time_since_epoch().count());
+
+  // cout << dist(gen) << '\n';
+  
 
   cout << "Total de valores calculados: " << size(valores) << '\n';
 }
